@@ -73,6 +73,7 @@ fun ConfiguredWebView(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 )
                 configureForProofSender(
+                    webView = this,
                     userAgent = userAgent,
                     allowThirdPartyCookies = allowThirdPartyCookies,
                 )
@@ -207,7 +208,6 @@ fun ConfiguredWebView(
             fileChooserCallback = null
             webView.stopLoading()
             webView.webChromeClient = null
-            webView.webViewClient = null
             webView.destroy()
         },
     )
