@@ -128,10 +128,14 @@ fun StreamProofApp(viewModel: AppViewModel = viewModel()) {
 
     var selectedTabIndex by rememberSaveable { mutableIntStateOf(0) }
     var preparedSlotIndex by rememberSaveable { mutableIntStateOf(-1) }
+    var selectedInstagramSlotIndex by rememberSaveable { mutableIntStateOf(0) }
     var explicitInstagramUrl by rememberSaveable { mutableStateOf<String?>(null) }
     var instagramNavigationNumber by rememberSaveable { mutableIntStateOf(0) }
     var nativePickerSelection by rememberSaveable { mutableStateOf<String?>(null) }
-    val preparedSlot = ProofSlot.entries.getOrNull(preparedSlotIndex)
+    val activeSlots = settings.activeProofSlots()
+    val preparedSlot = activeSlots.firstOrNull { it.ordinal == preparedSlotIndex }
+    val selectedInstagramSlot = activeSlots.firstOrNull { it.ordinal == selectedInstagramSlotIndex }
+        ?: activeSlots.firstOrNull()
 
     val nativePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
@@ -154,9 +158,9 @@ fun StreamProofApp(viewModel: AppViewModel = viewModel()) {
         }
     }
 
-    val savedGroupUrl = settings.savedInstagramGroupUrl.trim()
-    val defaultInstagramDestination = savedGroupUrl
-        .takeIf { isInstagramGroupChatUrl(it) }
+    val selectedGroupUrl = selectedInstagramSlot?.let(settings::instagramGroupUrlFor).orEmpty()
+    val defaultInstagramDestination = selectedGroupUrl
+        .takeIf(::isInstagramGroupChatUrl)
         ?: settings.instagramInboxUrl
     val instagramDestination = explicitInstagramUrl ?: defaultInstagramDestination
     val instagramNavigationKey = "$instagramNavigationNumber|$instagramDestination"
@@ -169,16 +173,17 @@ fun StreamProofApp(viewModel: AppViewModel = viewModel()) {
     fun prepareProof(slot: ProofSlot) {
         val proof = settings.proofFor(slot)
         when {
-            proof == null -> showMessage("Capture ${slot.label} in the Spotify Stats tab first.")
+            !activeSlots.contains(slot) -> showMessage("${settings.groupNameFor(slot)} is not enabled.")
+            proof == null -> showMessage("${settings.captureLabelFor(slot)} in the Spotify Stats tab first.")
             !ProofStorage.exists(context.contentResolver, Uri.parse(proof.uri)) -> {
-                showMessage("The saved ${slot.label} image is no longer available. Capture it again.")
+                showMessage("The saved ${settings.proofLabelFor(slot)} image is no longer available. Capture it again.")
             }
 
             else -> {
                 preparedSlotIndex = slot.ordinal
-                explicitInstagramUrl = settings.savedInstagramGroupUrl
-                    .trim()
-                    .takeIf { isInstagramGroupChatUrl(it) }
+                selectedInstagramSlotIndex = slot.ordinal
+                explicitInstagramUrl = settings.instagramGroupUrlFor(slot)
+                    .takeIf(::isInstagramGroupChatUrl)
                     ?: settings.instagramInboxUrl
                 instagramNavigationNumber += 1
                 selectedTabIndex = AppTab.INSTAGRAM.ordinal
@@ -246,7 +251,7 @@ fun StreamProofApp(viewModel: AppViewModel = viewModel()) {
                 nativePickerSelection = nativePickerSelection,
                 onNavigate = ::navigateInstagram,
                 onPrepareProof = ::prepareProof,
-                onSaveCurrentGroupUrl = viewModel::saveCurrentInstagramGroupUrl,
+                onSaveCurrentGroupUrl = { slot, url -> viewModel.saveCurrentInstagramGroupUrl(slot, url) },
                 onOpenPicker = {
                     runCatching { nativePickerLauncher.launch(arrayOf("image/*")) }
                         .onFailure { showMessage("Android could not open an image picker: ${it.message ?: "unknown error"}") }
@@ -271,6 +276,76 @@ fun StreamProofApp(viewModel: AppViewModel = viewModel()) {
             }
         }
     }
+
+    if (!settings.onboardingComplete) {
+        PlaylistGroupOnboarding(
+            initialGroupCount = settings.playlistGroupCount,
+            initialGroup1Name = settings.playlist1Name,
+            initialGroup2Name = settings.playlist2Name,
+            onComplete = viewModel::savePlaylistGroups,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PlaylistGroupOnboarding(
+    initialGroupCount: Int,
+    initialGroup1Name: String,
+    initialGroup2Name: String,
+    onComplete: (Int, String, String) -> Unit,
+) {
+    var groupCount by rememberSaveable { mutableIntStateOf(initialGroupCount.coerceIn(1, 2)) }
+    var group1Name by rememberSaveable { mutableStateOf(initialGroup1Name) }
+    var group2Name by rememberSaveable { mutableStateOf(initialGroup2Name) }
+
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text("Set up playlist groups") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("How many groups should receive proofs?")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = groupCount == 1,
+                        onClick = { groupCount = 1 },
+                        label = { Text("1 group") },
+                    )
+                    FilterChip(
+                        selected = groupCount == 2,
+                        onClick = { groupCount = 2 },
+                        label = { Text("2 groups") },
+                    )
+                }
+                OutlinedTextField(
+                    value = group1Name,
+                    onValueChange = { group1Name = it.take(40) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Group 1 name") },
+                    singleLine = true,
+                )
+                if (groupCount == 2) {
+                    OutlinedTextField(
+                        value = group2Name,
+                        onValueChange = { group2Name = it.take(40) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Group 2 name") },
+                        singleLine = true,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onComplete(groupCount, group1Name, group2Name) },
+            ) {
+                Text("Save and continue")
+            }
+        },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -297,6 +372,7 @@ private fun SpotifyStatsScreen(
     var historyVersion by remember { mutableIntStateOf(0) }
     val canGoBack = remember(webView, historyVersion) { webView?.canGoBack() == true }
     val canGoForward = remember(webView, historyVersion) { webView?.canGoForward() == true }
+    val activeSlots = settings.activeProofSlots()
 
     Column(
         modifier = modifier
@@ -406,44 +482,29 @@ private fun SpotifyStatsScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Button(
-                        onClick = { webView?.let { viewModel.captureProof(it, ProofSlot.PLAYLIST_1) } },
-                        enabled = pageReady && captureSlot == null,
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 58.dp),
-                    ) {
-                        if (captureSlot == ProofSlot.PLAYLIST_1) {
-                            androidx.compose.material3.CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
-                            )
-                            Spacer(Modifier.width(8.dp))
+                    activeSlots.forEach { slot ->
+                        Button(
+                            onClick = { webView?.let { viewModel.captureProof(it, slot) } },
+                            enabled = pageReady && captureSlot == null,
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 58.dp),
+                        ) {
+                            if (captureSlot == slot) {
+                                androidx.compose.material3.CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                            }
+                            Text(settings.captureLabelFor(slot))
                         }
-                        Text("Capture Playlist 1 Proof")
-                    }
-                    Button(
-                        onClick = { webView?.let { viewModel.captureProof(it, ProofSlot.PLAYLIST_2) } },
-                        enabled = pageReady && captureSlot == null,
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 58.dp),
-                    ) {
-                        if (captureSlot == ProofSlot.PLAYLIST_2) {
-                            androidx.compose.material3.CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
-                            )
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        Text("Capture Playlist 2 Proof")
                     }
                 }
 
-                val latestProofWithSlot = listOfNotNull(
-                    settings.playlist1Proof?.let { ProofSlot.PLAYLIST_1 to it },
-                    settings.playlist2Proof?.let { ProofSlot.PLAYLIST_2 to it },
-                ).maxByOrNull { it.second.createdAt }
+                val latestProofWithSlot = activeSlots
+                    .mapNotNull { slot -> settings.proofFor(slot)?.let { slot to it } }
+                    .maxByOrNull { it.second.createdAt }
                 val latestProof = latestProofWithSlot?.second
                 if (latestProof != null) {
                     Row(
@@ -462,7 +523,7 @@ private fun SpotifyStatsScreen(
                         TextButton(onClick = { onPrepareProof(latestProofWithSlot!!.first) }) {
                             Icon(Icons.Default.Send, contentDescription = null)
                             Spacer(Modifier.width(4.dp))
-                            Text("Go to Instagram")
+                            Text(settings.prepareLabelFor(latestProofWithSlot!!.first))
                         }
                     }
                 }
@@ -488,7 +549,7 @@ private fun InstagramScreen(
     nativePickerSelection: String?,
     onNavigate: (String) -> Unit,
     onPrepareProof: (ProofSlot) -> Unit,
-    onSaveCurrentGroupUrl: (String) -> Unit,
+    onSaveCurrentGroupUrl: (ProofSlot, String) -> Unit,
     onOpenPicker: () -> Unit,
     onOpenExternal: (String, String?) -> Unit,
     onShare: (ProofSlot) -> Unit,
@@ -512,6 +573,7 @@ private fun InstagramScreen(
     val helperEnabled = settings.instagramHelperClicks
     val instagramInstalled = isPackageInstalled(context, "com.instagram.android")
     val chromeInstalled = isPackageInstalled(context, "com.android.chrome")
+    val activeSlots = settings.activeProofSlots()
 
     Column(
         modifier = modifier
@@ -546,31 +608,46 @@ private fun InstagramScreen(
                     Icon(Icons.Default.Inbox, contentDescription = null)
                 },
             )
-            AssistChip(
-                onClick = {
-                    if (!isInstagramGroupChatUrl(settings.savedInstagramGroupUrl)) {
-                        onMessage("No saved group chat URL. Open the chat, then save the current URL.")
-                    } else {
-                        onNavigate(settings.savedInstagramGroupUrl.trim())
-                    }
-                },
-                label = { Text("Saved group chat") },
-                leadingIcon = {
-                    Icon(Icons.Default.Send, contentDescription = null)
-                },
-            )
-            AssistChip(
-                onClick = { onSaveCurrentGroupUrl(currentUrl) },
-                label = { Text("Save current URL") },
-                leadingIcon = {
-                    Icon(Icons.Default.Save, contentDescription = null)
-                },
-            )
+            activeSlots.forEach { slot ->
+                val savedGroupUrl = settings.instagramGroupUrlFor(slot)
+                AssistChip(
+                    onClick = {
+                        if (!isInstagramGroupChatUrl(savedGroupUrl)) {
+                            onMessage("No chat URL saved for ${settings.groupNameFor(slot)}.")
+                        } else {
+                            onNavigate(savedGroupUrl.trim())
+                        }
+                    },
+                    label = { Text("Open ${settings.groupNameFor(slot)} chat") },
+                    leadingIcon = {
+                        Icon(Icons.Default.Send, contentDescription = null)
+                    },
+                )
+            }
             IconButton(
                 onClick = { webView?.goBack() },
                 enabled = canGoBack,
             ) {
                 Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+            }
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 8.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            activeSlots.forEach { slot ->
+                AssistChip(
+                    onClick = { onSaveCurrentGroupUrl(slot, currentUrl) },
+                    label = { Text(settings.saveUrlLabelFor(slot)) },
+                    leadingIcon = {
+                        Icon(Icons.Default.Save, contentDescription = null)
+                    },
+                )
             }
         }
 
@@ -589,21 +666,15 @@ private fun InstagramScreen(
                 .padding(horizontal = 12.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            FilledTonalButton(
-                onClick = { onPrepareProof(ProofSlot.PLAYLIST_1) },
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 52.dp),
-            ) {
-                Text("Prepare Playlist 1 Proof")
-            }
-            FilledTonalButton(
-                onClick = { onPrepareProof(ProofSlot.PLAYLIST_2) },
-                modifier = Modifier
-                    .weight(1f)
-                    .heightIn(min = 52.dp),
-            ) {
-                Text("Prepare Playlist 2 Proof")
+            activeSlots.forEach { slot ->
+                FilledTonalButton(
+                    onClick = { onPrepareProof(slot) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 52.dp),
+                ) {
+                    Text(settings.prepareLabelFor(slot))
+                }
             }
         }
         if (errorMessage != null) {
@@ -666,23 +737,24 @@ private fun InstagramScreen(
                     // can be collapsed when the user needs to interact with the conversation.
                     modifier = Modifier.align(Alignment.TopCenter),
                     slot = preparedSlot,
+                    proofLabel = settings.proofLabelFor(preparedSlot),
                     proof = proof,
                     sent = settings.sentFor(preparedSlot),
-                    hasSavedGroupUrl = isInstagramGroupChatUrl(settings.savedInstagramGroupUrl),
+                    hasSavedGroupUrl = isInstagramGroupChatUrl(settings.instagramGroupUrlFor(preparedSlot)),
                     nativePickerSelection = nativePickerSelection,
                     instagramInstalled = instagramInstalled,
                     chromeInstalled = chromeInstalled,
                     helperEnabled = helperEnabled,
                     onOpenPicker = onOpenPicker,
                     onOpenInstagramApp = {
-                        val url = settings.savedInstagramGroupUrl
-                            .takeIf { isInstagramGroupChatUrl(it) }
+                        val url = settings.instagramGroupUrlFor(preparedSlot)
+                            .takeIf(::isInstagramGroupChatUrl)
                             ?: currentUrl
                         onOpenExternal(url, "com.instagram.android")
                     },
                     onOpenChrome = {
-                        val url = settings.savedInstagramGroupUrl
-                            .takeIf { isInstagramGroupChatUrl(it) }
+                        val url = settings.instagramGroupUrlFor(preparedSlot)
+                            .takeIf(::isInstagramGroupChatUrl)
                             ?: currentUrl
                         onOpenExternal(url, if (chromeInstalled) "com.android.chrome" else null)
                     },
@@ -705,6 +777,7 @@ private fun InstagramScreen(
 @Composable
 private fun ProofSendPanel(
     slot: ProofSlot,
+    proofLabel: String,
     proof: com.example.spotifyproofsender.data.ProofRecord?,
     sent: Boolean,
     hasSavedGroupUrl: Boolean,
@@ -743,7 +816,7 @@ private fun ProofSendPanel(
                 Icon(Icons.Default.Send, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "${slot.label} ready",
+                    "$proofLabel ready",
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleMedium,
                 )
@@ -766,35 +839,30 @@ private fun ProofSendPanel(
                     verticalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
                     if (proof == null) {
-                        Text("No proof reference is available. Return to Spotify Stats and capture it first.")
+                        Text("No proof available. Capture one in Spotify Stats first.")
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             SelectionContainerText(proof.displayName, Modifier.weight(1f))
                             CopyFilenameButton(proof.displayName)
                         }
                         Text(
-                            "Screenshot ready: ${proof.displayName}. Tap Instagram's image/photo button, choose the latest SpotifyProof image, then send.",
+                            "In Instagram, attach this image and send it.",
                             style = MaterialTheme.typography.bodySmall,
                         )
                         if (!hasSavedGroupUrl) {
                             Text(
-                                "No saved group chat URL. Open the group chat in this tab, then tap Save Current Instagram URL as Group Chat.",
+                                "No group chat saved. Save the current chat URL in the Instagram tab.",
                                 color = MaterialTheme.colorScheme.error,
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
-                        Text(
-                            "The Android picker cannot inject a file into Instagram Web. Manual selection and sending are required.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
                         Button(
                             onClick = onOpenPicker,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
                             Icon(Icons.Default.PhotoLibrary, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("Open Android Photo Picker / Files")
+                            Text("Find image")
                         }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -807,7 +875,7 @@ private fun ProofSendPanel(
                                 ) {
                                     Icon(Icons.Default.OpenInNew, contentDescription = null)
                                     Spacer(Modifier.width(4.dp))
-                                    Text("Open in Instagram app")
+                                    Text("Open Instagram")
                                 }
                             }
                             OutlinedButton(
@@ -816,7 +884,7 @@ private fun ProofSendPanel(
                             ) {
                                 Icon(Icons.Default.OpenInNew, contentDescription = null)
                                 Spacer(Modifier.width(4.dp))
-                                Text(if (chromeInstalled) "Open in Chrome" else "Open in browser")
+                                Text(if (chromeInstalled) "Open Chrome" else "Open browser")
                             }
                         }
                         Row(
@@ -826,7 +894,7 @@ private fun ProofSendPanel(
                             OutlinedButton(onClick = onShare, modifier = Modifier.weight(1f)) {
                                 Icon(Icons.Default.Share, contentDescription = null)
                                 Spacer(Modifier.width(4.dp))
-                                Text("Share via Android\n(may not support group chats)")
+                                Text("Android share")
                             }
                             Button(
                                 onClick = onMarkSent,
@@ -848,7 +916,7 @@ private fun ProofSendPanel(
                         }
                         if (nativePickerSelection != null) {
                             Text(
-                                "Native picker selected: $nativePickerSelection. Select the same file again when Instagram Web opens its attachment picker.",
+                                "Selected: $nativePickerSelection. Attach it in Instagram.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -857,7 +925,7 @@ private fun ProofSendPanel(
                 }
             } else {
                 Text(
-                    "Tap to show attachment and fallback actions. Instagram's composer remains visible below.",
+                    "Attachment actions below.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -902,7 +970,11 @@ private fun ProofsSettingsScreen(
     val context = LocalContext.current
     var statsUrl by remember(settings.statsUrl) { mutableStateOf(settings.statsUrl) }
     var instagramInboxUrl by remember(settings.instagramInboxUrl) { mutableStateOf(settings.instagramInboxUrl) }
-    var savedGroupUrl by remember(settings.savedInstagramGroupUrl) { mutableStateOf(settings.savedInstagramGroupUrl) }
+    var playlistGroupCount by remember(settings.playlistGroupCount) {
+        mutableIntStateOf(settings.playlistGroupCount)
+    }
+    var playlist1Name by remember(settings.playlist1Name) { mutableStateOf(settings.playlist1Name) }
+    var playlist2Name by remember(settings.playlist2Name) { mutableStateOf(settings.playlist2Name) }
     var customStatsUserAgent by remember(settings.customStatsUserAgent) { mutableStateOf(settings.customStatsUserAgent) }
     var customInstagramUserAgent by remember(settings.customInstagramUserAgent) { mutableStateOf(settings.customInstagramUserAgent) }
     var jpegQuality by remember(settings.jpegQuality) { mutableStateOf(settings.jpegQuality.toFloat()) }
@@ -913,7 +985,7 @@ private fun ProofsSettingsScreen(
         AlertDialog(
             onDismissRequest = { showResetDialog = false },
             title = { Text("Reset all settings?") },
-            text = { Text("This restores the defaults and forgets both proof references. Images already saved in Pictures/SpotifyProof will remain there.") },
+            text = { Text("This restores the defaults and forgets playlist groups and proof references. Images already saved in Pictures/SpotifyProof will remain there.") },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -942,10 +1014,10 @@ private fun ProofsSettingsScreen(
         ) {
             item {
                 SectionCard(title = "Session checklist") {
-                    ChecklistRow("Playlist 1 captured", settings.playlist1Proof != null)
-                    ChecklistRow("Playlist 1 sent", settings.playlist1Sent)
-                    ChecklistRow("Playlist 2 captured", settings.playlist2Proof != null)
-                    ChecklistRow("Playlist 2 sent", settings.playlist2Sent)
+                    settings.activeProofSlots().forEach { slot ->
+                        ChecklistRow("${settings.groupNameFor(slot)} captured", settings.proofFor(slot) != null)
+                        ChecklistRow("${settings.groupNameFor(slot)} sent", settings.sentFor(slot))
+                    }
                 }
             }
             item {
@@ -953,22 +1025,71 @@ private fun ProofsSettingsScreen(
                     modifier = Modifier.padding(horizontal = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    ProofSummaryCard(
-                        title = "Playlist 1 proof",
-                        proof = settings.playlist1Proof,
-                        sent = settings.playlist1Sent,
-                        onView = { viewModel.viewProof(context, ProofSlot.PLAYLIST_1) },
-                        onShare = { viewModel.shareProof(context, ProofSlot.PLAYLIST_1) },
-                        onDeleteReference = { viewModel.clearProofReference(ProofSlot.PLAYLIST_1) },
+                    settings.activeProofSlots().forEach { slot ->
+                        ProofSummaryCard(
+                            title = settings.proofLabelFor(slot),
+                            proof = settings.proofFor(slot),
+                            sent = settings.sentFor(slot),
+                            onView = { viewModel.viewProof(context, slot) },
+                            onShare = { viewModel.shareProof(context, slot) },
+                            onDeleteReference = { viewModel.clearProofReference(slot) },
+                        )
+                    }
+                }
+            }
+            item {
+                SettingsSectionCard(title = "Playlist groups") {
+                    Text("Choose how many groups receive proofs and name them.")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = playlistGroupCount == 1,
+                            onClick = { playlistGroupCount = 1 },
+                            label = { Text("1 group") },
+                        )
+                        FilterChip(
+                            selected = playlistGroupCount == 2,
+                            onClick = { playlistGroupCount = 2 },
+                            label = { Text("2 groups") },
+                        )
+                    }
+                    OutlinedTextField(
+                        value = playlist1Name,
+                        onValueChange = { playlist1Name = it.take(40) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Group 1 name") },
+                        singleLine = true,
                     )
-                    ProofSummaryCard(
-                        title = "Playlist 2 proof",
-                        proof = settings.playlist2Proof,
-                        sent = settings.playlist2Sent,
-                        onView = { viewModel.viewProof(context, ProofSlot.PLAYLIST_2) },
-                        onShare = { viewModel.shareProof(context, ProofSlot.PLAYLIST_2) },
-                        onDeleteReference = { viewModel.clearProofReference(ProofSlot.PLAYLIST_2) },
+                    if (playlistGroupCount == 2) {
+                        OutlinedTextField(
+                            value = playlist2Name,
+                            onValueChange = { playlist2Name = it.take(40) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Group 2 name") },
+                            singleLine = true,
+                        )
+                    }
+                    Text(
+                        "Chat URLs are saved from the Instagram tab.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    settings.activeProofSlots().forEach { slot ->
+                        val hasSavedUrl = isInstagramGroupChatUrl(settings.instagramGroupUrlFor(slot))
+                        Text(
+                            "${settings.groupNameFor(slot)} chat: ${if (hasSavedUrl) "Saved" else "Not saved"}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            viewModel.savePlaylistGroups(playlistGroupCount, playlist1Name, playlist2Name)
+                        },
+                    ) {
+                        Icon(Icons.Default.Save, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Save group settings")
+                    }
                 }
             }
             item {
@@ -991,23 +1112,13 @@ private fun ProofsSettingsScreen(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                         singleLine = true,
                     )
-                    OutlinedTextField(
-                        value = savedGroupUrl,
-                        onValueChange = { savedGroupUrl = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Saved Instagram group chat URL") },
-                        supportingText = { Text("Use an Instagram /direct/t/... URL, or leave blank to start at the inbox") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                        singleLine = true,
-                    )
                     Button(
                         onClick = {
-                            val valid = isHttpsUrl(statsUrl) && isHttpsUrl(instagramInboxUrl) &&
-                                (savedGroupUrl.isBlank() || isInstagramGroupChatUrl(savedGroupUrl))
+                            val valid = isHttpsUrl(statsUrl) && isHttpsUrl(instagramInboxUrl)
                             if (!valid) {
-                                onMessage("Use valid HTTPS URLs and an Instagram /direct/t/... group chat URL.")
+                                onMessage("Use valid HTTPS URLs.")
                             } else {
-                                viewModel.saveUrls(statsUrl, instagramInboxUrl, savedGroupUrl)
+                                viewModel.saveUrls(statsUrl, instagramInboxUrl)
                             }
                         },
                     ) {

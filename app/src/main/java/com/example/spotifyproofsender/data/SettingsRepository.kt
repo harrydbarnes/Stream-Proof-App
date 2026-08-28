@@ -19,6 +19,14 @@ class SettingsRepository(private val context: Context) {
     private object Keys {
         val statsUrl = stringPreferencesKey("stats_url")
         val instagramInboxUrl = stringPreferencesKey("instagram_inbox_url")
+        val playlistGroupCount = intPreferencesKey("playlist_group_count")
+        val playlist1GroupLabel = stringPreferencesKey("playlist_1_group_label")
+        val playlist2GroupLabel = stringPreferencesKey("playlist_2_group_label")
+        val playlist1InstagramGroupUrl = stringPreferencesKey("playlist_1_instagram_group_url")
+        val playlist2InstagramGroupUrl = stringPreferencesKey("playlist_2_instagram_group_url")
+        val onboardingComplete = booleanPreferencesKey("onboarding_complete")
+
+        // Kept only to migrate the pre-group single chat URL into group 1.
         val savedInstagramGroupUrl = stringPreferencesKey("saved_instagram_group_url")
         val screenshotFormat = stringPreferencesKey("screenshot_format")
         val jpegQuality = intPreferencesKey("jpeg_quality")
@@ -48,11 +56,32 @@ class SettingsRepository(private val context: Context) {
         }
         .map { preferences -> preferences.toAppSettings() }
 
-    suspend fun saveUrls(statsUrl: String, instagramInboxUrl: String, savedGroupUrl: String) {
+    suspend fun saveUrls(statsUrl: String, instagramInboxUrl: String) {
         context.spotifyProofDataStore.edit { preferences ->
             preferences[Keys.statsUrl] = statsUrl
             preferences[Keys.instagramInboxUrl] = instagramInboxUrl
-            preferences[Keys.savedInstagramGroupUrl] = savedGroupUrl
+        }
+    }
+
+    suspend fun savePlaylistGroups(
+        groupCount: Int,
+        group1Name: String,
+        group2Name: String,
+    ) {
+        context.spotifyProofDataStore.edit { preferences ->
+            preferences[Keys.playlistGroupCount] = groupCount.coerceIn(1, ProofSlot.entries.size)
+            preferences[Keys.playlist1GroupLabel] = cleanGroupName(group1Name, ProofSlot.PLAYLIST_1.label)
+            preferences[Keys.playlist2GroupLabel] = cleanGroupName(group2Name, ProofSlot.PLAYLIST_2.label)
+            preferences[Keys.onboardingComplete] = true
+        }
+    }
+
+    suspend fun saveInstagramGroupUrl(slot: ProofSlot, url: String) {
+        context.spotifyProofDataStore.edit { preferences ->
+            when (slot) {
+                ProofSlot.PLAYLIST_1 -> preferences[Keys.playlist1InstagramGroupUrl] = url
+                ProofSlot.PLAYLIST_2 -> preferences[Keys.playlist2InstagramGroupUrl] = url
+            }
         }
     }
 
@@ -153,15 +182,24 @@ class SettingsRepository(private val context: Context) {
         val format = get(Keys.screenshotFormat)
             ?.let { value -> ScreenshotFormat.entries.firstOrNull { it.name == value } }
             ?: ScreenshotFormat.JPG
+        val legacyGroupUrl = get(Keys.savedInstagramGroupUrl)
+            ?.trim()
+            ?.takeIf(::isInstagramGroupChatUrl)
+            .orEmpty()
+        val hasPlaylistGroupSetup = contains(Keys.playlist1GroupLabel) ||
+            contains(Keys.playlist2GroupLabel)
 
         return AppSettings(
             statsUrl = get(Keys.statsUrl)?.trim()?.takeIf(::isHttpsUrl) ?: DEFAULT_STATS_URL,
             instagramInboxUrl = get(Keys.instagramInboxUrl)?.trim()?.takeIf(::isHttpsUrl)
                 ?: DEFAULT_INSTAGRAM_INBOX_URL,
-            savedInstagramGroupUrl = get(Keys.savedInstagramGroupUrl)
-                ?.trim()
-                ?.takeIf(::isInstagramGroupChatUrl)
-                .orEmpty(),
+            playlistGroupCount = (get(Keys.playlistGroupCount) ?: ProofSlot.entries.size)
+                .coerceIn(1, ProofSlot.entries.size),
+            playlist1Name = readGroupName(Keys.playlist1GroupLabel, ProofSlot.PLAYLIST_1.label),
+            playlist2Name = readGroupName(Keys.playlist2GroupLabel, ProofSlot.PLAYLIST_2.label),
+            playlist1InstagramGroupUrl = readGroupUrl(Keys.playlist1InstagramGroupUrl, legacyGroupUrl),
+            playlist2InstagramGroupUrl = readGroupUrl(Keys.playlist2InstagramGroupUrl),
+            onboardingComplete = get(Keys.onboardingComplete) ?: hasPlaylistGroupSetup,
             screenshotFormat = format,
             jpegQuality = (get(Keys.jpegQuality) ?: 92).coerceIn(10, 100),
             captureDelayMs = (get(Keys.captureDelayMs) ?: 500L).coerceIn(0L, 5_000L),
@@ -179,6 +217,19 @@ class SettingsRepository(private val context: Context) {
         )
     }
 
+    private fun Preferences.readGroupName(
+        key: Preferences.Key<String>,
+        fallback: String,
+    ): String = get(key)?.trim()?.takeIf(String::isNotBlank) ?: fallback
+
+    private fun Preferences.readGroupUrl(
+        key: Preferences.Key<String>,
+        legacyFallback: String = "",
+    ): String {
+        val value = if (contains(key)) this[key].orEmpty() else legacyFallback
+        return value.trim().takeIf(::isInstagramGroupChatUrl).orEmpty()
+    }
+
     private fun Preferences.readProof(
         uriKey: Preferences.Key<String>,
         nameKey: Preferences.Key<String>,
@@ -190,3 +241,6 @@ class SettingsRepository(private val context: Context) {
         return ProofRecord(uri = uri, displayName = name, createdAt = createdAt)
     }
 }
+
+private fun cleanGroupName(value: String, fallback: String): String =
+    value.trim().take(40).ifBlank { fallback }

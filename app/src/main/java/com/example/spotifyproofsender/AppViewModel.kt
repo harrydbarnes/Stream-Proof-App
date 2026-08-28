@@ -50,6 +50,7 @@ class AppViewModel(application: android.app.Application) : AndroidViewModel(appl
         if (_captureSlot.value != null) return
 
         val snapshot = settings.value
+        val proofLabel = snapshot.proofLabelFor(slot)
         if (webView.url.isNullOrBlank()) {
             showMessage("Stats for Spotify has not loaded yet. Wait for the page, then try again.")
             return
@@ -84,11 +85,11 @@ class AppViewModel(application: android.app.Application) : AndroidViewModel(appl
                     )
                 }
                 repository.saveProof(slot, record)
-                showMessage("Saved ${record.displayName} in Pictures/SpotifyProof")
+                showMessage("Saved $proofLabel in Pictures/SpotifyProof")
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
                 val detail = error.message?.takeIf(String::isNotBlank) ?: error.javaClass.simpleName
-                showMessage("Could not save the proof: $detail")
+                showMessage("Could not save $proofLabel: $detail")
             } finally {
                 bitmap?.recycle()
                 _captureSlot.value = null
@@ -96,14 +97,11 @@ class AppViewModel(application: android.app.Application) : AndroidViewModel(appl
         }
     }
 
-    fun saveUrls(statsUrl: String, instagramInboxUrl: String, savedGroupUrl: String) {
+    fun saveUrls(statsUrl: String, instagramInboxUrl: String) {
         val cleanStatsUrl = statsUrl.trim().ifBlank { DEFAULT_STATS_URL }
         val cleanInboxUrl = instagramInboxUrl.trim().ifBlank { DEFAULT_INSTAGRAM_INBOX_URL }
-        val cleanSavedGroupUrl = savedGroupUrl.trim()
-        if (!isHttpsUrl(cleanStatsUrl) || !isHttpsUrl(cleanInboxUrl) ||
-            (cleanSavedGroupUrl.isNotBlank() && !isInstagramGroupChatUrl(cleanSavedGroupUrl))
-        ) {
-            showMessage("Use valid HTTPS URLs and an Instagram /direct/t/... group chat URL.")
+        if (!isHttpsUrl(cleanStatsUrl) || !isHttpsUrl(cleanInboxUrl)) {
+            showMessage("Use valid HTTPS URLs.")
             return
         }
 
@@ -111,26 +109,37 @@ class AppViewModel(application: android.app.Application) : AndroidViewModel(appl
             repository.saveUrls(
                 statsUrl = cleanStatsUrl,
                 instagramInboxUrl = cleanInboxUrl,
-                savedGroupUrl = cleanSavedGroupUrl,
             )
             showMessage("URL settings saved")
         }
     }
 
-    fun saveCurrentInstagramGroupUrl(url: String) {
+    fun savePlaylistGroups(groupCount: Int, group1Name: String, group2Name: String) {
+        launchSettingUpdate {
+            repository.savePlaylistGroups(
+                groupCount = groupCount,
+                group1Name = group1Name,
+                group2Name = group2Name,
+            )
+            showMessage("Playlist groups saved")
+        }
+    }
+
+    fun saveCurrentInstagramGroupUrl(slot: ProofSlot, url: String) {
         val trimmed = url.trim()
-        if (!isInstagramGroupChatUrl(trimmed)) {
-            showMessage("Open the Instagram group chat first, then save its /direct/t/... URL.")
+        val groupName = settings.value.groupNameFor(slot)
+        if (trimmed.isNotBlank() && !isInstagramGroupChatUrl(trimmed)) {
+            showMessage("Open the $groupName chat first, then save its /direct/t/... URL.")
             return
         }
 
         launchSettingUpdate {
-            repository.saveUrls(
-                statsUrl = settings.value.statsUrl,
-                instagramInboxUrl = settings.value.instagramInboxUrl,
-                savedGroupUrl = trimmed,
-            )
-            showMessage("Saved this Instagram direct URL as the group chat")
+            repository.saveInstagramGroupUrl(slot, trimmed)
+            showMessage(if (trimmed.isBlank()) {
+                "Cleared chat URL for $groupName"
+            } else {
+                "Saved chat URL for $groupName"
+            })
         }
     }
 
@@ -180,7 +189,7 @@ class AppViewModel(application: android.app.Application) : AndroidViewModel(appl
 
     fun clearProofReference(slot: ProofSlot) = launchSettingUpdate {
         repository.clearProofReference(slot)
-        showMessage("${slot.label} proof reference removed. The image remains in Pictures/SpotifyProof.")
+        showMessage("${settings.value.proofLabelFor(slot)} reference removed. The image remains in Pictures/SpotifyProof.")
     }
 
     fun resetAllSettings() {
@@ -192,14 +201,15 @@ class AppViewModel(application: android.app.Application) : AndroidViewModel(appl
 
     fun shareProof(context: Context, slot: ProofSlot) {
         val proof = settings.value.proofFor(slot)
+        val proofLabel = settings.value.proofLabelFor(slot)
         if (proof == null) {
-            showMessage("There is no saved ${slot.label} proof yet.")
+            showMessage("There is no saved $proofLabel yet.")
             return
         }
 
         val uri = Uri.parse(proof.uri)
         if (!ProofStorage.exists(context.contentResolver, uri)) {
-            showMessage("The saved ${slot.label} image is no longer available. Capture it again.")
+            showMessage("The saved $proofLabel image is no longer available. Capture it again.")
             return
         }
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
@@ -210,7 +220,7 @@ class AppViewModel(application: android.app.Application) : AndroidViewModel(appl
         }
 
         try {
-            val chooser = Intent.createChooser(shareIntent, "Share ${slot.label} proof").apply {
+            val chooser = Intent.createChooser(shareIntent, "Share ${proofLabel}").apply {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             context.startActivity(chooser)
@@ -223,14 +233,15 @@ class AppViewModel(application: android.app.Application) : AndroidViewModel(appl
 
     fun viewProof(context: Context, slot: ProofSlot) {
         val proof = settings.value.proofFor(slot)
+        val proofLabel = settings.value.proofLabelFor(slot)
         if (proof == null) {
-            showMessage("There is no saved ${slot.label} proof yet.")
+            showMessage("There is no saved $proofLabel yet.")
             return
         }
 
         val uri = Uri.parse(proof.uri)
         if (!ProofStorage.exists(context.contentResolver, uri)) {
-            showMessage("The saved ${slot.label} image is no longer available. Capture it again.")
+            showMessage("The saved $proofLabel image is no longer available. Capture it again.")
             return
         }
 

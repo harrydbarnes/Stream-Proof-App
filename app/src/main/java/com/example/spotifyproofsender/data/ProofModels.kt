@@ -19,7 +19,12 @@ data class ProofRecord(
 data class AppSettings(
     val statsUrl: String = DEFAULT_STATS_URL,
     val instagramInboxUrl: String = DEFAULT_INSTAGRAM_INBOX_URL,
-    val savedInstagramGroupUrl: String = "",
+    val playlistGroupCount: Int = 2,
+    val playlist1Name: String = ProofSlot.PLAYLIST_1.label,
+    val playlist2Name: String = ProofSlot.PLAYLIST_2.label,
+    val playlist1InstagramGroupUrl: String = "",
+    val playlist2InstagramGroupUrl: String = "",
+    val onboardingComplete: Boolean = false,
     val screenshotFormat: ScreenshotFormat = ScreenshotFormat.JPG,
     val jpegQuality: Int = 92,
     val captureDelayMs: Long = 500L,
@@ -35,6 +40,27 @@ data class AppSettings(
     val playlist1Sent: Boolean = false,
     val playlist2Sent: Boolean = false,
 ) {
+    fun activeProofSlots(): List<ProofSlot> = ProofSlot.entries
+        .take(playlistGroupCount.coerceIn(1, ProofSlot.entries.size))
+
+    fun groupNameFor(slot: ProofSlot): String = when (slot) {
+        ProofSlot.PLAYLIST_1 -> playlist1Name
+        ProofSlot.PLAYLIST_2 -> playlist2Name
+    }
+
+    fun proofLabelFor(slot: ProofSlot): String = "${groupNameFor(slot)} proof"
+
+    fun captureLabelFor(slot: ProofSlot): String = "Capture ${proofLabelFor(slot)}"
+
+    fun prepareLabelFor(slot: ProofSlot): String = "Prepare ${proofLabelFor(slot)}"
+
+    fun saveUrlLabelFor(slot: ProofSlot): String = "Save URL for ${groupNameFor(slot)}"
+
+    fun instagramGroupUrlFor(slot: ProofSlot): String = when (slot) {
+        ProofSlot.PLAYLIST_1 -> playlist1InstagramGroupUrl
+        ProofSlot.PLAYLIST_2 -> playlist2InstagramGroupUrl
+    }
+
     fun proofFor(slot: ProofSlot): ProofRecord? = when (slot) {
         ProofSlot.PLAYLIST_1 -> playlist1Proof
         ProofSlot.PLAYLIST_2 -> playlist2Proof
