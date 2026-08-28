@@ -307,6 +307,18 @@ private fun SpotifyStatsScreen(
             title = { Text("Spotify Stats") },
             actions = {
                 IconButton(
+                    onClick = { webView?.goBack() },
+                    enabled = canGoBack,
+                ) {
+                    Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                }
+                IconButton(
+                    onClick = { webView?.goForward() },
+                    enabled = canGoForward,
+                ) {
+                    Icon(Icons.Default.ArrowForward, contentDescription = "Forward")
+                }
+                IconButton(
                     onClick = { webView?.reload() },
                     enabled = webView != null,
                 ) {
@@ -315,33 +327,6 @@ private fun SpotifyStatsScreen(
             },
             windowInsets = WindowInsets(0, 0, 0, 0),
         )
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(
-                onClick = { webView?.goBack() },
-                enabled = canGoBack,
-            ) {
-                Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-            }
-            IconButton(
-                onClick = { webView?.goForward() },
-                enabled = canGoForward,
-            ) {
-                Icon(Icons.Default.ArrowForward, contentDescription = "Forward")
-            }
-            Spacer(Modifier.weight(1f))
-            Text(
-                "Visible viewport",
-                modifier = Modifier.padding(horizontal = 12.dp),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
 
         if (loading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         if (errorMessage != null) {
