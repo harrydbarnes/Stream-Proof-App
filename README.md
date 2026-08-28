@@ -4,9 +4,11 @@ A private Android utility for capturing visible Stats for Spotify pages and prep
 
 ## Build and run
 
-1. Open this directory in Android Studio.
+1. Clone this repository and open it in Android Studio, or run `./gradlew :app:assembleDebug` from the project root.
 2. Let Gradle sync, using JDK 17 and an Android SDK with API 35 installed.
 3. Run the `app` configuration on an Android 10 or newer device or emulator.
+
+The repository includes the Gradle wrapper, so a separate Gradle installation is not required. GitHub Actions also builds the debug APK and runs the unit-test task on pushes and pull requests.
 
 The project uses Kotlin, Jetpack Compose, Material 3, DataStore Preferences, Android WebView, and scoped MediaStore storage. It does not request broad storage permission.
 
@@ -44,4 +46,3 @@ The experimental helper only runs best-effort JavaScript that looks for an obvio
 - The app captures the visible WebView viewport. Full-page capture is intentionally not required because WebView full-page drawing is unreliable for dynamic pages.
 - Android controls the file chooser. The app requests an image-focused picker, but it cannot force a particular folder or inject a chosen file into Instagram Web.
 - Clearing cookies is best effort by domain because Android WebView uses a shared cookie store.
-

@@ -31,6 +31,8 @@ import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.OpenInNew
@@ -383,20 +385,21 @@ private fun SpotifyStatsScreen(
                     pageReady = false
                     loading = true
                     errorMessage = null
-                    historyVersion += 1
                 },
                 onPageFinished = { url ->
                     currentUrl = url
                     loading = false
                     pageReady = errorMessage == null
-                    historyVersion += 1
                 },
                 onPageError = { message ->
                     pageReady = false
                     loading = false
                     errorMessage = message
                 },
-                onUrlChanged = { currentUrl = it },
+                onUrlChanged = {
+                    currentUrl = it
+                    historyVersion += 1
+                },
                 onWebViewReady = { webView = it },
             )
         }
@@ -657,25 +660,28 @@ private fun InstagramScreen(
                     currentUrl = url
                     loading = true
                     errorMessage = null
-                    historyVersion += 1
                 },
                 onPageFinished = { url ->
                     currentUrl = url
                     loading = false
-                    historyVersion += 1
                 },
                 onPageError = { message ->
                     loading = false
                     errorMessage = message
                 },
-                onUrlChanged = { currentUrl = it },
+                onUrlChanged = {
+                    currentUrl = it
+                    historyVersion += 1
+                },
                 onWebViewReady = { webView = it },
             )
 
             if (preparedSlot != null) {
                 val proof = settings.proofFor(preparedSlot)
                 ProofSendPanel(
-                    modifier = Modifier.align(Alignment.BottomCenter),
+                    // Keep the composer area at the bottom of Instagram visible. The panel
+                    // can be collapsed when the user needs to interact with the conversation.
+                    modifier = Modifier.align(Alignment.TopCenter),
                     slot = preparedSlot,
                     proof = proof,
                     sent = settings.sentFor(preparedSlot),
@@ -731,112 +737,147 @@ private fun ProofSendPanel(
     onTryHelper: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var expanded by rememberSaveable { mutableStateOf(true) }
+
+    LaunchedEffect(slot) {
+        expanded = true
+    }
+
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(max = 440.dp)
+            .heightIn(max = if (expanded) 320.dp else 78.dp)
             .padding(8.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
     ) {
         Column(
-            modifier = Modifier
-                .verticalScroll(rememberScrollState())
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(7.dp),
+            modifier = Modifier.padding(12.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Icon(Icons.Default.Send, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("${slot.label} ready", style = MaterialTheme.typography.titleMedium)
-            }
-            if (proof == null) {
-                Text("No proof reference is available. Return to Spotify Stats and capture it first.")
-            } else {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    SelectionContainerText(proof.displayName, Modifier.weight(1f))
-                    CopyFilenameButton(proof.displayName)
-                }
                 Text(
-                    "Screenshot ready: ${proof.displayName}. Tap Instagram's image/photo button, choose the latest SpotifyProof image, then send.",
-                    style = MaterialTheme.typography.bodySmall,
+                    "${slot.label} ready",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
                 )
-                if (!hasSavedGroupUrl) {
-                    Text(
-                        "No saved group chat URL. Open the group chat in this tab, then tap Save Current URL as Group Chat.",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
+                IconButton(
+                    onClick = { expanded = !expanded },
+                ) {
+                    Icon(
+                        imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = if (expanded) {
+                            "Collapse proof actions"
+                        } else {
+                            "Expand proof actions"
+                        },
                     )
                 }
+            }
+            if (expanded) {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    if (proof == null) {
+                        Text("No proof reference is available. Return to Spotify Stats and capture it first.")
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            SelectionContainerText(proof.displayName, Modifier.weight(1f))
+                            CopyFilenameButton(proof.displayName)
+                        }
+                        Text(
+                            "Screenshot ready: ${proof.displayName}. Tap Instagram's image/photo button, choose the latest SpotifyProof image, then send.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        if (!hasSavedGroupUrl) {
+                            Text(
+                                "No saved group chat URL. Open the group chat in this tab, then tap Save Current Instagram URL as Group Chat.",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        Text(
+                            "The Android picker cannot inject a file into Instagram Web. Manual selection and sending are required.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Button(
+                            onClick = onOpenPicker,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Default.PhotoLibrary, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Open Android Photo Picker / Files")
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            if (instagramInstalled) {
+                                OutlinedButton(
+                                    onClick = onOpenInstagramApp,
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Icon(Icons.Default.OpenInNew, contentDescription = null)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Open in Instagram app")
+                                }
+                            }
+                            OutlinedButton(
+                                onClick = onOpenChrome,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Icon(Icons.Default.OpenInNew, contentDescription = null)
+                                Spacer(Modifier.width(4.dp))
+                                Text(if (chromeInstalled) "Open in Chrome" else "Open in browser")
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(onClick = onShare, modifier = Modifier.weight(1f)) {
+                                Icon(Icons.Default.Share, contentDescription = null)
+                                Spacer(Modifier.width(4.dp))
+                                Text("Share via Android\n(may not support group chats)")
+                            }
+                            Button(
+                                onClick = onMarkSent,
+                                enabled = !sent,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = null)
+                                Spacer(Modifier.width(4.dp))
+                                Text(if (sent) "Marked sent" else "Mark sent")
+                            }
+                        }
+                        if (helperEnabled) {
+                            OutlinedButton(
+                                onClick = onTryHelper,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("Try Instagram Web helper clicks")
+                            }
+                        }
+                        if (nativePickerSelection != null) {
+                            Text(
+                                "Native picker selected: $nativePickerSelection. Select the same file again when Instagram Web opens its attachment picker.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            } else {
                 Text(
-                    "The Android picker cannot inject a file into Instagram Web. Manual selection and sending are required.",
+                    "Tap to show attachment and fallback actions. Instagram's composer remains visible below.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Button(
-                    onClick = onOpenPicker,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.Default.PhotoLibrary, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Open Android Photo Picker / Files")
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    if (instagramInstalled) {
-                        OutlinedButton(
-                            onClick = onOpenInstagramApp,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Icon(Icons.Default.OpenInNew, contentDescription = null)
-                            Spacer(Modifier.width(4.dp))
-                            Text("Open in Instagram app")
-                        }
-                    }
-                    OutlinedButton(
-                        onClick = onOpenChrome,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Icon(Icons.Default.OpenInNew, contentDescription = null)
-                        Spacer(Modifier.width(4.dp))
-                        Text(if (chromeInstalled) "Open in Chrome" else "Open in browser")
-                    }
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedButton(onClick = onShare, modifier = Modifier.weight(1f)) {
-                        Icon(Icons.Default.Share, contentDescription = null)
-                        Spacer(Modifier.width(4.dp))
-                        Text("Share via Android\n(may not support group chats)")
-                    }
-                    Button(
-                        onClick = onMarkSent,
-                        enabled = !sent,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Icon(Icons.Default.Check, contentDescription = null)
-                        Spacer(Modifier.width(4.dp))
-                        Text(if (sent) "Marked sent" else "Mark sent")
-                    }
-                }
-                if (helperEnabled) {
-                    OutlinedButton(
-                        onClick = onTryHelper,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Try Instagram Web helper clicks")
-                    }
-                }
-                if (nativePickerSelection != null) {
-                    Text(
-                        "Native picker selected: $nativePickerSelection. Select the same file again when Instagram Web opens its attachment picker.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
         }
     }

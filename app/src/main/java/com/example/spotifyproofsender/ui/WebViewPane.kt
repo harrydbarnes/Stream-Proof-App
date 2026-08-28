@@ -46,12 +46,22 @@ fun ConfiguredWebView(
     val latestOnWebViewReady by rememberUpdatedState(onWebViewReady)
     var fileChooserCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
 
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenMultipleDocuments(),
-    ) { uris ->
+    fun deliverFileChooserResult(uris: List<Uri>) {
         val callback = fileChooserCallback
         fileChooserCallback = null
         callback?.onReceiveValue(uris.takeIf { it.isNotEmpty() }?.toTypedArray())
+    }
+
+    val singleFilePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        deliverFileChooserResult(uri?.let(::listOf).orEmpty())
+    }
+
+    val multipleFilePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
+        deliverFileChooserResult(uris)
     }
 
     AndroidView(
@@ -87,6 +97,17 @@ fun ConfiguredWebView(
                     override fun onPageFinished(view: WebView, url: String) {
                         latestOnUrlChanged(url)
                         latestOnPageFinished(url)
+                    }
+
+                    override fun doUpdateVisitedHistory(
+                        view: WebView,
+                        url: String,
+                        isReload: Boolean,
+                    ) {
+                        super.doUpdateVisitedHistory(view, url, isReload)
+                        // Instagram is a single-page app. This callback also observes URLs
+                        // changed by pushState/replaceState without a full page load.
+                        latestOnUrlChanged(url)
                     }
 
                     override fun onReceivedError(
@@ -146,8 +167,15 @@ fun ConfiguredWebView(
                             .distinct()
                             .toList()
                             .ifEmpty { listOf("image/*") }
+                        val launcher = if (
+                            fileChooserParams.mode == FileChooserParams.MODE_OPEN_MULTIPLE
+                        ) {
+                            multipleFilePickerLauncher
+                        } else {
+                            singleFilePickerLauncher
+                        }
                         runCatching {
-                            filePickerLauncher.launch(requestedTypes.toTypedArray())
+                            launcher.launch(requestedTypes.toTypedArray())
                         }.onFailure {
                             fileChooserCallback = null
                             filePathCallback.onReceiveValue(null)
